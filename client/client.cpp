@@ -1,96 +1,177 @@
 #include <iostream>
+#include <vector>
 #include <boost/asio.hpp>
-#include "encryption.h"
-#include "unique_words.h"
-#include "cipher.h"
-#include "token_gen.h"
+#include <nlohmann/json.hpp>
 #include "../common/base64.h"
+#include "encryption.h"
+#include "token_gen.h"
+#include "../common/sse_types.h"
 
 using boost::asio::ip::tcp;
 using json = nlohmann::json;
-using namespace std;
-
-json receiveJson(tcp::socket& socket) {
-    uint32_t length;
-    boost::asio::read(socket, boost::asio::buffer(&length, sizeof(length)));
-    
-    vector<char> data(length);
-    boost::asio::read(socket, boost::asio::buffer(data));
-    
-    return json::parse(string(data.begin(), data.end()));
-}
-
-void sendJson(tcp::socket& socket, const json& j) {
-    string message = j.dump();
-    uint32_t length = message.size();
-    
-    boost::asio::write(socket, boost::asio::buffer(&length, sizeof(length)));
-    boost::asio::write(socket, boost::asio::buffer(message));
-}
-
-void handleAddFile(tcp::socket& socket, const string& file_path) {
-    encryption& e = encryption::Instance();
-    
-    AddToken token;
-    token_generator::gen_ta(file_path, token);
-    
-    json request = base64::serialize(token);
-    
-    // Шифруем, кодируем и добавляем содержимое файла
-    string encrypted_content = e.encrypt_files(file_path);
-    request["encrypted_content"] = base64::encode(encrypted_content); // Кодируем в Base64
-    
-    sendJson(socket, request);
-    
-    // Получаем ответ от сервера
-    json response = receiveJson(socket);
-    cout << "Server response: " << response.dump(2) << endl;
-}
-
-void handleSearch(tcp::socket& socket, const string& word) {
-    encryption& e = encryption::Instance();
-    
-    SearchToken token;
-    token_generator::gen_ts(word, token);
-    
-    json request = base64::serialize(token);
-    
-    sendJson(socket, request);
-    
-    // Получаем ответ от сервера
-    json response = receiveJson(socket);
-    if (response["status"] == "success") {
-        cout << "Found files: " << response["files"].dump() << endl;
-    } else {
-        cerr << "Search failed: " << response["message"] << endl;
-    }
-}
-
-void handleDeleteFile(tcp::socket& socket, const string& file_path) {
-    encryption& e = encryption::Instance();
-    
-    DelToken token;
-    token_generator::gen_td(file_path, token);
-    
-    json request = base64::serialize(token);
-    
-    sendJson(socket, request);
-    
-    // Получаем ответ от сервера
-    json response = receiveJson(socket);
-    if (response["status"] == "success") {
-        cout << "File deleted successfully" << endl;
-    } else {
-        cerr << "Deletion failed: " << response["message"] << endl;
-    }
-}
 
 void showMenu() {
     cout << "\nAvailable commands:\n"
          << "1. add <file_path> - Add a file\n"
          << "2. search <word> - Search for a word\n"
-         << "3. delete <file_path> - Delete a file\n"
-         << "4. exit - Exit the program\n";
+         << "3. get <filename> - Get a file\n"
+         << "4. delete <filename> - Delete a file\n"
+         << "5. exit - Exit program\n"
+         << "Enter command: ";
+}
+
+json send_request(const json& request) {
+    try {
+        boost::asio::io_context io_context;
+        tcp::resolver resolver(io_context);
+        tcp::socket socket(io_context);
+
+        boost::asio::connect(socket, resolver.resolve("127.0.0.1", "12345"));
+
+        string request_str = request.dump();
+        uint32_t request_size = htonl(request_str.size());
+        boost::asio::write(socket, boost::asio::buffer(&request_size, sizeof(request_size)));
+        boost::asio::write(socket, boost::asio::buffer(request_str));
+
+        uint32_t response_size;
+        boost::asio::read(socket, boost::asio::buffer(&response_size, sizeof(response_size)));
+        response_size = ntohl(response_size);
+
+        vector<char> response_data(response_size);
+        boost::asio::read(socket, boost::asio::buffer(response_data));
+
+        return json::parse(response_data.begin(), response_data.end());
+
+    } catch (const exception& e) {
+        cerr << "Network error: " << e.what() << '\n';
+        return {{"status", "ERROR"}, {"message", "Network error"}};
+    }
+}
+
+void add_file(const string& filename) {
+    try {
+        ifstream file(filename, ios::binary);
+        if (!file) throw runtime_error("Cannot open file: " + filename);
+        string content((istreambuf_iterator<char>(file)), istreambuf_iterator<char>());
+        
+        // Выделение имени файла из полученного пути
+        filesystem::path path_obj(filename);
+        string filename = path_obj.filename().string();
+
+        AddToken add_token;
+        token_generator::gen_ta(filename, content, add_token);
+        
+        vector<uint8_t> encrypted = encryption::Instance().encrypt_files(vector<uint8_t>(content.begin(), content.end()));
+        
+        // Формирование запроса к серверу
+        json request;
+        request["action"] = "add";
+        request["filename"] = filename;
+        request["encrypted_content"] = Base64::encode(encrypted);
+        
+        json token_json;
+        token_json["t1"] = add_token.t1;
+        token_json["t2"] = add_token.t2;
+        token_json["lambdas"] = json::array();
+        
+        for (const auto& lambda : add_token.lambdas) {
+            json lambda_json;
+            lambda_json["f_w"] = get<0>(lambda);
+            lambda_json["g_w"] = get<1>(lambda);
+            
+            const auto& tuple1 = get<2>(lambda);
+            lambda_json["tuple1"] = {
+                get<0>(tuple1),
+                get<1>(tuple1),
+                get<2>(tuple1)
+            };
+            
+            const auto& tuple2 = get<3>(lambda);
+            lambda_json["tuple2"] = {
+                get<0>(tuple2),
+                get<1>(tuple2),
+                get<2>(tuple2),
+                get<3>(tuple2),
+                get<4>(tuple2),
+                get<5>(tuple2),
+                get<6>(tuple2)
+            };
+            
+            token_json["lambdas"].push_back(lambda_json);
+        }
+        
+        request["token"] = token_json;
+
+        json response = send_request(request);
+        cout << "Add file response: " << response.dump(2) << '\n';
+
+    } catch (const exception& e) {
+        cerr << "Error adding file: " << e.what() << '\n';
+    }
+}
+
+void search_word(const string& word) {
+    try {
+        SearchToken token;
+        token_generator::gen_ts(word, token);
+        
+        json request;
+        request["action"] = "search";
+        request["token"] = {
+            {"t1", token.t1},
+            {"t2", token.t2},
+            {"t3", token.t3}
+        };
+        
+        json response = send_request(request);
+        if (response["status"] == "OK") {
+            cout << "Search results for '" << word << "':\n";
+            for (const auto& file : response["files"]) {
+                string filename = file.get<string>();
+                cout << " - " << filename << '\n';
+            }
+        } else {
+            cerr << "Search failed: " << response["message"] << '\n';
+        }
+    } catch (const exception& e) {
+        cerr << "Search error: " << e.what() << '\n';
+    }
+}
+
+void get_file(const string& filename) {
+    try {
+        json request;
+        request["action"] = "get";
+        request["filename"] = filename;
+        
+        json response = send_request(request);
+        
+        if (response["status"] == "OK") {
+            vector<uint8_t> encrypted = Base64::decode(response["content"].get<string>());
+            auto decrypted = encryption::Instance().decrypt_files(encrypted);
+            
+            cout << "File content (" << decrypted.size() << " bytes):\n";
+            cout << string(decrypted.begin(), decrypted.end()) << '\n';
+        } else {
+            cerr << "Error: " << response["message"] << '\n';
+        }
+    } catch (const exception& e) {
+        cerr << "Get file error: " << e.what() << '\n';
+    }
+}
+
+void delete_file(const string& filename) {
+    try {
+        json request;
+        request["action"] = "delete";
+        request["filename"] = filename;
+
+        json response = send_request(request);
+        cout << "Server response: " << response.dump(4) << '\n';
+
+    } catch (const exception& e) {
+        cerr << "Error deleting file: " << e.what() << '\n';
+    }
 }
 
 int main(int argc, char* argv[]) {
@@ -99,54 +180,39 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    string KEY = argv[1];
-    encryption& e = encryption::Instance();
-    e.setKey(KEY);
+    encryption::Instance().setKey(argv[1]);
+    cout << "Client started. Type 'help' for commands.\n";
 
-    try {
-        boost::asio::io_context io_context;
-        tcp::resolver resolver(io_context);
-        tcp::resolver::results_type endpoints = resolver.resolve("127.0.0.1", "12345");
-        
-        tcp::socket socket(io_context);
-        boost::asio::connect(socket, endpoints);
-
-        cout << "Connected to server\n";
+    while (true) {
         showMenu();
+        string input;
+        getline(cin, input);
 
-        while (true) {
-            cout << "\nEnter command: ";
-            string input;
-            getline(cin, input);
+        if (input.empty()) continue;
 
-            if (input.empty()) continue;
+        // Разделение команды и аргумента
+        size_t space_pos = input.find(' ');
+        string command = input.substr(0, space_pos);
+        string argument = space_pos != string::npos ? input.substr(space_pos + 1) : "";
 
-            // Разбираем ввод пользователя
-            size_t space_pos = input.find(' ');
-            string command = input.substr(0, space_pos);
-            string argument = space_pos != string::npos ? input.substr(space_pos + 1) : "";
-
-            if (command == "add" && !argument.empty()) {
-                handleAddFile(socket, argument);
-            } 
-            else if (command == "search" && !argument.empty()) {
-                handleSearch(socket, argument);
-            }
-            else if (command == "delete" && !argument.empty()) {
-                handleDeleteFile(socket, argument);
-            }
-            else if (command == "exit") {
-                break;
-            }
-            else {
-                cerr << "Invalid command. Try again.\n";
-                showMenu();
-            }
+        if (command == "add" && !argument.empty()) {
+            add_file(argument);
+        } 
+        else if (command == "search" && !argument.empty()) {
+            search_word(argument);
         }
-    } 
-    catch (const exception& e) {
-        cerr << "Exception: " << e.what() << endl;
-        return 1;
+        else if (command == "get" && !argument.empty()) {
+            get_file(argument);
+        }
+        else if (command == "delete" && !argument.empty()) {
+            delete_file(argument);
+        }
+        else if (command == "exit") {
+            break;
+        }
+        else {
+            cout << "Unknown command or missing argument.\n";
+        }
     }
 
     return 0;
