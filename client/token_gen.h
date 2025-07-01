@@ -1,25 +1,22 @@
 #ifndef TOKEN_GEN_H
 #define TOKEN_GEN_H
 
-#include <iostream>
-#include <fstream>
-#include <sstream>
 #include <vector>
 #include <string>
-#include <algorithm>
-#include "encryption.h"
-#include "unique_words.h"
+#include <unordered_set>
+#include <tuple>
 #include "../common/sse_types.h"
+#include "encryption.h"
 #include "../common/base64.h"
 
 using namespace std;
 
-
 class token_generator {
 public:
-    static void gen_ta(const string& file_path, AddToken&);
-    static void gen_td(const string& file_path, DelToken&);
-    static void gen_ts(const string& word, SearchToken&);
+    static unordered_set<string> process_file(const string& file_content);
+    static void gen_ta(const string& file_id, const string& file_content, AddToken& token);
+    static void gen_td(const string& file_id, DelToken& token);
+    static void gen_ts(const string& word, SearchToken& token);
 };
 
 #endif
