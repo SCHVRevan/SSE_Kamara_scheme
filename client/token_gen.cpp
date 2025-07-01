@@ -1,48 +1,74 @@
 #include "token_gen.h"
 
-void token_generator::gen_ta(const string& file_path, AddToken& token) {
-    encryption& e = encryption::Instance();
+using namespace std;
 
-    string file_id = word_getter::extract_filename(file_path);
-    if (file_id == "") {
-        throw runtime_error("File not found: " + file_path);
-    }
-    token.t1 = e.F(file_id);
-    token.t2 = e.G(file_id);
-    
+unordered_set<string> token_generator::process_file(const string& file_content) {
     unordered_set<string> words;
-    string h1_pw = "";
-    string h2_pf = "";
-    word_getter::process_file(file_path, words);
-    for (const auto& w: words) {
-        h1_pw = e.H1(e.P(w));
-        h2_pf = e.H2(e.P(file_id));
+    string current_word;
         
-        tuple<string, string, string> tuple1 = {
-            base64::xor_strings(file_id, h1_pw),
-            h1_pw, h1_pw
-        };
-        
-        tuple<string, string, string, string, string, string, string> tuple2 = {
-            h2_pf, h2_pf, h2_pf, h2_pf, h2_pf, h2_pf,
-            base64::xor_strings(e.F(w), h2_pf)
-        };
-        
-        token.lambdas.emplace_back(e.F(w), e.G(w), tuple1, tuple2);
+    for (char c : file_content) {
+        if (isalpha(c)) {
+            current_word += c;
+        } else {
+            if (!current_word.empty()) {
+                words.insert(current_word);
+                current_word.clear();
+            }
+        }
     }
-
-    token.encrypted_file = base64::encode(e.encrypt_files(file_path));
+        
+    if (!current_word.empty()) {
+        words.insert(current_word);
+    }
+        
+    return words;
 }
 
-void token_generator::gen_td(const string& file_path, DelToken& token) {
+void token_generator::gen_ta(const string& file_id, const string& file_content, AddToken& token) {
     encryption& e = encryption::Instance();
-    string file_id = word_getter::extract_filename(file_path);
-    if (file_id == "") {
-        throw runtime_error("File not found: " + file_path);
-    }
+
     token.t1 = e.F(file_id);
     token.t2 = e.G(file_id);
-    token.t2 = e.P(file_id);
+        
+    unordered_set<string> words = process_file(file_content);
+        
+    for (const auto& w : words) {
+        vector<uint8_t> f_w = e.F(w);
+        vector<uint8_t> g_w = e.G(w);
+        vector<uint8_t> p_w = e.P(w);
+        vector<uint8_t> p_id = e.P(file_id);
+            
+        vector<uint8_t> h1_pw = e.H1(p_w);
+        vector<uint8_t> h2_pf = e.H2(p_id);
+            
+        // (id ⊕ H1(P(w)), H1(P(w)), H1(P(w)))
+        vector<uint8_t> file_id_data = vector<uint8_t>(file_id.begin(), file_id.end());
+        vector<uint8_t> xor_fid_h1 = Base64::xor_vectors(file_id_data, h1_pw);
+        tuple<vector<uint8_t>, vector<uint8_t>, vector<uint8_t>> tuple1 = {
+            xor_fid_h1,
+            h1_pw,
+            h1_pw
+        };
+            
+        // (H2(P(id)), ..., F(w) ⊕ H2(P(id)))
+        vector<uint8_t> xor_fw_h2 = Base64::xor_vectors(f_w, h2_pf);
+        
+        tuple<vector<uint8_t>, vector<uint8_t>, vector<uint8_t>, 
+            vector<uint8_t>, vector<uint8_t>, vector<uint8_t>,
+            vector<uint8_t>> tuple2 = {
+                h2_pf, h2_pf, h2_pf, h2_pf, h2_pf, h2_pf,
+                xor_fw_h2
+            };
+        
+        token.lambdas.emplace_back(f_w, g_w, tuple1, tuple2);
+    }
+}
+
+void token_generator::gen_td(const string& file_id, DelToken& token) {
+    encryption& e = encryption::Instance();
+    token.t1 = e.F(file_id);
+    token.t2 = e.G(file_id);
+    token.t3 = e.P(file_id);
 }
 
 void token_generator::gen_ts(const string& word, SearchToken& token) {
