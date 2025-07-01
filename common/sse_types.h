@@ -9,32 +9,31 @@
 
 using namespace std;
 using LambdaTuple = tuple<
-    string,
-    string,
-    tuple<string, string, string>,
-    tuple<string, string, string, string, string, string, string>
+    vector<uint8_t>,
+    vector<uint8_t>,
+    tuple<vector<uint8_t>, vector<uint8_t>, vector<uint8_t>>,
+    tuple<vector<uint8_t>, vector<uint8_t>, vector<uint8_t>, vector<uint8_t>, vector<uint8_t>, vector<uint8_t>, vector<uint8_t>>
 >;
 
 // F(w), G(w), P(w)
 struct SearchToken {
-    string t1;
-    string t2;
-    string t3;
+    vector<uint8_t> t1;
+    vector<uint8_t> t2;
+    vector<uint8_t> t3;
 };
 
 struct AddToken {
-    string t1;  // F(id)
-    string t2;  // G(id)
+    vector<uint8_t> t1;  // F(id)
+    vector<uint8_t> t2;  // G(id)
     //vector<tuple<F(w), G(w), ((id, 0, 0)^H1(P(wi))), ((0, 0, 0, 0, 0, 0, F(wi))^H2(P(id)))>>;
     vector<LambdaTuple> lambdas;
-    string encrypted_file;
 };
 
 // F(id), G(id), P(id), id
 struct DelToken {
-    string t1;
-    string t2;
-    string t3;
+    vector<uint8_t> t1;
+    vector<uint8_t> t2;
+    vector<uint8_t> t3;
 };
 
 #endif
