@@ -1,150 +1,96 @@
 #include "base64.h"
 
-string base64::encode(const string& data) {
-    string encoded;
-    encoded.resize(boost::beast::detail::base64::encoded_size(data.size()));
-    boost::beast::detail::base64::encode(encoded.data(), data.data(), data.size());
-    return encoded;
+string Base64::encode(const vector<uint8_t>& data) {
+    static constexpr char sEncodingTable[] = {
+        'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
+        'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
+        'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X',
+        'Y', 'Z', 'a', 'b', 'c', 'd', 'e', 'f',
+        'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n',
+        'o', 'p', 'q', 'r', 's', 't', 'u', 'v',
+        'w', 'x', 'y', 'z', '0', '1', '2', '3',
+        '4', '5', '6', '7', '8', '9', '+', '/'
+    };
+
+    size_t in_len = data.size();
+    size_t out_len = 4 * ((in_len + 2) / 3);
+    string ret(out_len, '\0');
+    size_t i;
+    char* p = &ret[0];
+
+    for (i = 0; i < in_len - 2; i += 3) {
+        *p++ = sEncodingTable[(data[i] >> 2) & 0x3F];
+        *p++ = sEncodingTable[((data[i] & 0x3) << 4) | ((int)(data[i + 1] & 0xF0) >> 4)];
+        *p++ = sEncodingTable[((data[i + 1] & 0xF) << 2) | ((int)(data[i + 2] & 0xC0) >> 6)];
+        *p++ = sEncodingTable[data[i + 2] & 0x3F];
+    }
+    if (i < in_len) {
+        *p++ = sEncodingTable[(data[i] >> 2) & 0x3F];
+        if (i == (in_len - 1)) {
+            *p++ = sEncodingTable[((data[i] & 0x3) << 4)];
+            *p++ = '=';
+        } else {
+            *p++ = sEncodingTable[((data[i] & 0x3) << 4) | ((int)(data[i + 1] & 0xF0) >> 4)];
+            *p++ = sEncodingTable[((data[i + 1] & 0xF) << 2)];
+        }
+        *p++ = '=';
+    }
+
+    return ret;
 }
 
-string base64::decode(const string& data) {
-    string decoded;
-    decoded.resize(boost::beast::detail::base64::decoded_size(data.size()));
-    auto result = boost::beast::detail::base64::decode(decoded.data(), data.data(), data.size());
-    decoded.resize(result.first);
-    return decoded;
+vector<uint8_t> Base64::decode(const string& encoded_string) {
+    static constexpr unsigned char kDecodingTable[] = {
+        64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+        64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+        64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 62, 64, 64, 64, 63,
+        52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 64, 64, 64, 64, 64, 64,
+        64,  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14,
+        15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 64, 64, 64, 64, 64,
+        64, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+        41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 64, 64, 64, 64, 64,
+        64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+        64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+        64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+        64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+        64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+        64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+        64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
+        64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64
+    };
+
+    size_t in_len = encoded_string.size();
+    if (in_len % 4 != 0) return {};
+
+    size_t out_len = in_len / 4 * 3;
+    if (encoded_string[in_len - 1] == '=') out_len--;
+    if (encoded_string[in_len - 2] == '=') out_len--;
+
+    vector<uint8_t> out(out_len);
+
+    for (size_t i = 0, j = 0; i < in_len;) {
+        uint32_t a = encoded_string[i] == '=' ? 0 & i++ : kDecodingTable[static_cast<int>(encoded_string[i++])];
+        uint32_t b = encoded_string[i] == '=' ? 0 & i++ : kDecodingTable[static_cast<int>(encoded_string[i++])];
+        uint32_t c = encoded_string[i] == '=' ? 0 & i++ : kDecodingTable[static_cast<int>(encoded_string[i++])];
+        uint32_t d = encoded_string[i] == '=' ? 0 & i++ : kDecodingTable[static_cast<int>(encoded_string[i++])];
+
+        uint32_t triple = (a << 3 * 6) + (b << 2 * 6) + (c << 1 * 6) + (d << 0 * 6);
+
+        if (j < out_len) out[j++] = (triple >> 2 * 8) & 0xFF;
+        if (j < out_len) out[j++] = (triple >> 1 * 8) & 0xFF;
+        if (j < out_len) out[j++] = (triple >> 0 * 8) & 0xFF;
+    }
+
+    return out;
 }
 
-string base64::xor_strings(const string& a, const string& b) {
-    string result;
-    const size_t max_len = max(a.size(), b.size());
-    
-    for (size_t i = 0; i < max_len; ++i) {
-        // Если символ выходит за границы строки, берём '\0' (нулевой байт)
-        char a_char = (i < a.size()) ? a[i] : '\0';
-        char b_char = (i < b.size()) ? b[i] : '\0';
-        
-        result.push_back(a_char ^ b_char);
+vector<uint8_t> Base64::xor_vectors(const vector<uint8_t>& v1, const vector<uint8_t>& v2) {
+    size_t min_size = min(v1.size(), v2.size());
+    vector<uint8_t> result(min_size);
+
+    for (size_t i = 0; i < min_size; ++i) {
+        result[i] = v1[i] ^ v2[i];
     }
-    
-    // Обрезаем нулевые байты в начале строки
-    size_t first_non_zero = 0;
-    while (first_non_zero < result.size() && result[first_non_zero] == '\0') {
-        first_non_zero++;
-    }
-    
-    if (first_non_zero > 0) {
-        result = result.substr(first_non_zero);
-    }
-    
+
     return result;
-}
-
-json base64::serialize_lambda(const auto& lambda) {
-    const auto& f_w = get<0>(lambda);   // F(w)
-    const auto& g_w = get<1>(lambda);   // G(w)
-    const auto& tuple1 = get<2>(lambda);    // (id, 0, 0) ^ H1(P(wi))
-    const auto& tuple2 = get<3>(lambda);    // (0, ..., F(wi)) ^ H2(P(id))
-
-    return {
-        f_w,
-        g_w,
-        {
-            get<0>(tuple1),
-            get<1>(tuple1),
-            get<2>(tuple1)
-        },
-        {
-            get<0>(tuple2),
-            get<1>(tuple2),
-            get<2>(tuple2),
-            get<3>(tuple2),
-            get<4>(tuple2),
-            get<5>(tuple2),
-            get<6>(tuple2)
-        }
-    };
-}
-
-json base64::serialize(const AddToken& token) {
-    json request;
-    request["action"] = "add";
-    request["t1"] = token.t1;
-    request["t2"] = token.t2;
-    
-    // Сериализуем массив lambdas
-    json lambdas_array = json::array();
-    for (const auto& lambda : token.lambdas) {
-        lambdas_array.push_back(serialize_lambda(lambda));
-    }
-    request["lambdas"] = lambdas_array;
-    
-    return request;
-}
-
-json base64::serialize(const SearchToken& token) {
-    return {
-        {"action", "search"},
-        {"t1", token.t1},
-        {"t2", token.t2},
-        {"t3", token.t3}
-    };
-}
-
-json base64::serialize(const DelToken& token) {
-    return {
-        {"action", "delete"},
-        {"t1", token.t1},
-        {"t2", token.t2},
-        {"t3", token.t3}
-    };
-}
-
-LambdaTuple base64::deserialize_lambda(const json& j) {
-    return {
-        j[0].get<string>(), // F(w)
-        j[1].get<string>(), // G(w)
-        { // tuple1
-            j[2][0].get<string>(),
-            j[2][1].get<string>(),
-            j[2][2].get<string>()
-        },
-        { // tuple2
-            j[3][0].get<string>(),
-            j[3][1].get<string>(),
-            j[3][2].get<string>(),
-            j[3][3].get<string>(),
-            j[3][4].get<string>(),
-            j[3][5].get<string>(),
-            j[3][6].get<string>()
-        }
-    };
-}
-
-AddToken base64::deserialize_add_token(const json& j) {
-    AddToken token;
-    token.t1 = j["t1"].get<string>();
-    token.t2 = j["t2"].get<string>();
-    
-    for (const auto& item : j["lambdas"]) {
-        token.lambdas.push_back(base64::deserialize_lambda(item));
-    }
-    
-    return token;
-}
-
-SearchToken base64::deserialize_search_token(const json& j) {
-    return {
-        j["t1"].get<string>(),
-        j["t2"].get<string>(),
-        j["t3"].get<string>()
-    };
-}
-
-DelToken base64::deserialize_del_token(const json& j) {
-    return {
-        j["t1"].get<string>(),
-        j["t2"].get<string>(),
-        j["t3"].get<string>()
-    };
 }
